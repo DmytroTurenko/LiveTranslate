@@ -3,7 +3,7 @@
 // (соединение идёт напрямую к Gemini в облаке).
 
 // При изменении файлов поднимите версию — старый кэш удалится.
-const CACHE = 'translator-v1';
+const CACHE = 'translator-v2';
 
 const SHELL = [
     'index.html',
