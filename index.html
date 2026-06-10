@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#007bff">
+    <title>Gemini Live Переводчик</title>
+
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Переводчик">
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+        }
+
+        body {
+            font-family: system-ui, sans-serif;
+            background: #f4f7f6;
+            padding: calc(env(safe-area-inset-top) + 20px) 16px calc(env(safe-area-inset-bottom) + 20px);
+            text-align: center;
+            -webkit-text-size-adjust: 100%;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            padding: 24px 20px;
+            border-radius: 16px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        }
+
+        h2 {
+            margin-top: 0;
+            font-size: 22px;
+        }
+
+        label {
+            display: block;
+            text-align: left;
+            font-size: 14px;
+            color: #555;
+            margin-top: 12px;
+        }
+
+        select,
+        button,
+        input {
+            width: 100%;
+            padding: 14px;
+            margin: 8px 0;
+            border-radius: 10px;
+            border: 1px solid #ccc;
+            font-size: 16px; /* ≥16px — чтобы iOS не зумил поле при фокусе */
+            background: white;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            padding: 18px;
+            margin-top: 16px;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        button:active {
+            opacity: 0.85;
+        }
+
+        button.active {
+            background: #dc3545;
+        }
+
+        .status {
+            margin-top: 16px;
+            font-weight: bold;
+            color: #666;
+            min-height: 1.4em;
+        }
+
+        .status.error {
+            color: #dc3545;
+        }
+
+        /* Блок настроек ключа — сворачивается */
+        details.key-block {
+            margin-top: 8px;
+            text-align: left;
+        }
+
+        details.key-block summary {
+            font-size: 13px;
+            color: #888;
+            cursor: pointer;
+        }
+
+        .key-hint {
+            font-size: 12px;
+            color: #999;
+            margin: 4px 0 0;
+        }
+
+        .key-hint a {
+            color: #007bff;
+        }
+
+        /* Индикатор уровня микрофона */
+        .meter-wrap {
+            margin-top: 15px;
+            text-align: left;
+        }
+
+        .meter-label {
+            font-size: 13px;
+            color: #888;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .meter {
+            height: 14px;
+            background: #e9ecef;
+            border-radius: 7px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+
+        .meter-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
+            transition: width 0.08s linear;
+        }
+
+        .stats {
+            margin-top: 12px;
+            font-size: 13px;
+            color: #888;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 6px 12px;
+        }
+
+        .dot {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #ccc;
+            margin-right: 5px;
+            vertical-align: baseline;
+        }
+
+        .dot.on {
+            background: #28a745;
+        }
+
+        .dot.rx {
+            background: #007bff;
+        }
+
+        /* Субтитры: оригинал и перевод */
+        .subs {
+            margin-top: 18px;
+            text-align: left;
+        }
+
+        .sub-box {
+            background: #f4f7f6;
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-top: 8px;
+            min-height: 1.4em;
+            max-height: 6.5em;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .sub-box .sub-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #999;
+            margin-bottom: 4px;
+        }
+
+        .sub-box .sub-text {
+            font-size: 17px;
+            color: #222;
+            line-height: 1.35;
+            min-height: 1.35em;
+            word-wrap: break-word;
+        }
+
+        .sub-box.translation {
+            background: #eef4ff;
+        }
+
+        .sub-box.translation .sub-text {
+            color: #0a4bcc;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h2>Gemini Live Translator</h2>
+
+        <label>Язык оригинала:</label>
+        <select id="fromLang">
+            <option value="Russian">Русский</option>
+            <option value="English">English</option>
+            <option value="Spanish">Español</option>
+            <option value="Ukrainian">Українська</option>
+            <option value="Dutch" selected>Nederlands</option>
+        </select>
+
+        <label>Язык перевода:</label>
+        <select id="toLang">
+            <option value="English">English</option>
+            <option value="Russian" selected>Русский</option>
+            <option value="Spanish">Español</option>
+            <option value="Ukrainian">Українська</option>
+            <option value="Dutch">Nederlands</option>
+        </select>
+
+        <button id="startBtn">Включить перевод</button>
+        <div id="status" class="status">Статус: Отключен</div>
+
+        <details class="key-block" id="keyBlock">
+            <summary>Ключ Gemini API</summary>
+            <input id="apiKey" type="password" placeholder="AIza..." autocomplete="off"
+                   autocapitalize="off" autocorrect="off" spellcheck="false">
+            <p class="key-hint">
+                Хранится только на этом устройстве (localStorage).
+                Ключ можно получить в <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">AI Studio</a>.
+            </p>
+        </details>
+
+        <div class="meter-wrap">
+            <div class="meter-label">
+                <span><span id="micDot" class="dot"></span>Микрофон</span>
+                <span id="micState">выключен</span>
+            </div>
+            <div class="meter">
+                <div id="meterFill" class="meter-fill"></div>
+            </div>
+        </div>
+
+        <div class="stats">
+            <span>Отправлено: <b id="sentCount">0</b> чанков</span>
+            <span><span id="rxDot" class="dot"></span>Получено аудио: <b id="recvCount">0</b></span>
+        </div>
+
+        <div class="subs">
+            <div class="sub-box original">
+                <div class="sub-title">Слышу (оригинал)</div>
+                <div id="origText" class="sub-text"></div>
+            </div>
+            <div class="sub-box translation">
+                <div class="sub-title">Перевод</div>
+                <div id="transText" class="sub-text"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ====== Прямое подключение к Gemini Live API (без своего сервера) ======
+        // Модель с поддержкой Live API (bidiGenerateContent).
+        // Если поменяется — правится здесь.
+        const LIVE_MODEL = "models/gemini-3.5-live-translate-preview";
+        const GEMINI_HOST = "generativelanguage.googleapis.com";
+        const GEMINI_PATH = "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+
+        let socket;
+        let audioContext;       // контекст записи (16 kHz)
+        let playbackContext;    // контекст воспроизведения (24 kHz), один на сессию
+        let playbackTime = 0;   // когда заканчивается уже запланированный звук
+        let scriptProcessor;
+        let mediaStream;
+        let isRecording = false;
+        let sentChunks = 0;
+        let recvChunks = 0;
+        let rxBlinkTimer;
+
+        // Накопленный текст текущей реплики (приходит маленькими кусочками)
+        let origBuffer = "";
+        let transBuffer = "";
+
+        const startBtn = document.getElementById('startBtn');
+        const statusDiv = document.getElementById('status');
+        const meterFill = document.getElementById('meterFill');
+        const micDot = document.getElementById('micDot');
+        const micState = document.getElementById('micState');
+        const sentCountEl = document.getElementById('sentCount');
+        const recvCountEl = document.getElementById('recvCount');
+        const rxDot = document.getElementById('rxDot');
+        const origTextEl = document.getElementById('origText');
+        const transTextEl = document.getElementById('transText');
+        const apiKeyInput = document.getElementById('apiKey');
+        const keyBlock = document.getElementById('keyBlock');
+
+        // --- Ключ: загрузка/сохранение в localStorage ---
+        apiKeyInput.value = localStorage.getItem('geminiApiKey') || "";
+        apiKeyInput.addEventListener('change', () => {
+            localStorage.setItem('geminiApiKey', apiKeyInput.value.trim());
+        });
+        // Если ключа ещё нет — раскрываем блок, чтобы было видно куда вводить
+        if (!apiKeyInput.value) keyBlock.open = true;
+
+        startBtn.addEventListener('click', toggleTranslation);
+
+        function setStatus(text, isError = false) {
+            statusDiv.textContent = "Статус: " + text;
+            statusDiv.classList.toggle('error', isError);
+        }
+
+        async function toggleTranslation() {
+            if (isRecording) {
+                stopSession();
+            } else {
+                await startSession();
+            }
+        }
+
+        async function startSession() {
+            const apiKey = apiKeyInput.value.trim();
+            if (!apiKey) {
+                setStatus("Введите ключ Gemini API ниже", true);
+                keyBlock.open = true;
+                return;
+            }
+
+            isRecording = true;
+            sentChunks = 0;
+            recvChunks = 0;
+            sentCountEl.textContent = "0";
+            recvCountEl.textContent = "0";
+            origBuffer = "";
+            transBuffer = "";
+            origTextEl.textContent = "";
+            transTextEl.textContent = "";
+            startBtn.textContent = "Остановить";
+            startBtn.classList.add('active');
+            setStatus("Подключение...");
+
+            // Контекст воспроизведения создаем по клику пользователя,
+            // чтобы браузер (особенно iOS) не заблокировал автовоспроизведение
+            playbackContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+            playbackTime = 0;
+
+            // Подключаемся НАПРЯМУЮ к Gemini Live API. Ключ — в query-параметре.
+            const url = `wss://${GEMINI_HOST}${GEMINI_PATH}?key=${encodeURIComponent(apiKey)}`;
+            socket = new WebSocket(url);
+
+            socket.onopen = () => {
+                setStatus("Соединение установлено. Настройка...");
+
+                const fromLang = document.getElementById('fromLang').value;
+                const toLang = document.getElementById('toLang').value;
+
+                // Полная стартовая конфигурация (раньше её собирал сервер)
+                const setupMessage = {
+                    setup: {
+                        model: LIVE_MODEL,
+                        generationConfig: {
+                            responseModalities: ["AUDIO"]
+                        },
+                        systemInstruction: {
+                            parts: [{
+                                text: `You are a real-time voice-to-voice translation assistant. Strictly translate speech from ${fromLang} directly into ${toLang}. Do not answer the queries, do not add commentary, output only the direct audio translation.`
+                            }]
+                        },
+                        // Текст параллельно с голосом
+                        inputAudioTranscription: {},
+                        outputAudioTranscription: {}
+                    }
+                };
+                socket.send(JSON.stringify(setupMessage));
+
+                // Запуск записи с микрофона
+                initAudioRecording().catch(err => {
+                    setStatus("Нет доступа к микрофону: " + err.message, true);
+                    stopSession(true);
+                });
+            };
+
+            socket.onmessage = async (event) => {
+                try {
+                    // Gemini шлет бинарные фреймы — в браузере это Blob, его нужно
+                    // сначала прочитать как текст, иначе JSON.parse молча падает
+                    const text = event.data instanceof Blob ? await event.data.text() : event.data;
+                    const response = JSON.parse(text);
+
+                    if (response.setupComplete) {
+                        setStatus("Gemini готов. Говорите...");
+                        return;
+                    }
+
+                    const sc = response.serverContent;
+
+                    // Текст распознанной речи пользователя (оригинал)
+                    if (sc?.inputTranscription?.text) {
+                        origBuffer += sc.inputTranscription.text;
+                        origTextEl.textContent = origBuffer;
+                        origTextEl.parentElement.scrollTop = origTextEl.parentElement.scrollHeight;
+                    }
+
+                    // Текст того, что Gemini произносит (перевод)
+                    if (sc?.outputTranscription?.text) {
+                        transBuffer += sc.outputTranscription.text;
+                        transTextEl.textContent = transBuffer;
+                        transTextEl.parentElement.scrollTop = transTextEl.parentElement.scrollHeight;
+                    }
+
+                    // Конец реплики — фиксируем текст и готовимся к следующей
+                    if (sc?.turnComplete) {
+                        origBuffer = "";
+                        transBuffer = "";
+                    }
+
+                    // Аудио может прийти в нескольких parts сразу
+                    const parts = sc?.modelTurn?.parts ?? [];
+                    for (const part of parts) {
+                        if (part.inlineData?.data) {
+                            recvChunks++;
+                            recvCountEl.textContent = recvChunks;
+                            blinkRx();
+                            playPCMBuffer(part.inlineData.data);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Ошибка обработки ответа:", e, event.data);
+                }
+            };
+
+            socket.onerror = () => setStatus("Ошибка соединения с Gemini", true);
+            socket.onclose = (e) => {
+                if (isRecording) {
+                    const hint = (e.code === 1006 || e.code === 1008)
+                        ? " — проверьте ключ API и название модели"
+                        : "";
+                    setStatus(`Соединение закрыто (${e.code})${hint}`, true);
+                    stopSession(true);
+                }
+            };
+        }
+
+        function blinkRx() {
+            rxDot.classList.add('rx');
+            clearTimeout(rxBlinkTimer);
+            rxBlinkTimer = setTimeout(() => rxDot.classList.remove('rx'), 300);
+        }
+
+        async function initAudioRecording() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 }); // Gemini ждет 16kHz
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const source = audioContext.createMediaStreamSource(mediaStream);
+
+            micDot.classList.add('on');
+            micState.textContent = "включен, идет запись";
+
+            // Создаем процессор для отправки чанков аудио по 4096 семплов (~250мс)
+            scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+
+            scriptProcessor.onaudioprocess = (e) => {
+                if (!isRecording || socket.readyState !== WebSocket.OPEN) return;
+
+                const inputData = e.inputBuffer.getChannelData(0);
+
+                // Уровень сигнала для визуализации (RMS)
+                let sum = 0;
+                for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
+                const rms = Math.sqrt(sum / inputData.length);
+                meterFill.style.width = Math.min(100, rms * 400) + "%";
+
+                // Конвертируем Float32 из браузера в Int16 PCM для Gemini
+                const pcmData = new Int16Array(inputData.length);
+                for (let i = 0; i < inputData.length; i++) {
+                    let s = Math.max(-1, Math.min(1, inputData[i]));
+                    pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                }
+
+                // Кодируем в Base64 и отправляем чанк в поток
+                let binary = '';
+                const bytes = new Uint8Array(pcmData.buffer);
+                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                const base64Audio = btoa(binary);
+
+                socket.send(JSON.stringify({
+                    realtimeInput: {
+                        mediaChunks: [{
+                            mimeType: "audio/pcm;rate=16000",
+                            data: base64Audio
+                        }]
+                    }
+                }));
+
+                sentChunks++;
+                sentCountEl.textContent = sentChunks;
+            };
+
+            source.connect(scriptProcessor);
+            scriptProcessor.connect(audioContext.destination);
+        }
+
+        // Воспроизведение PCM 24kHz ответа от Gemini.
+        // Чанки ставятся в очередь друг за другом в одном контексте,
+        // иначе звук рвется и часть чанков теряется
+        function playPCMBuffer(base64Data) {
+            if (!playbackContext) return;
+
+            const binaryString = atob(base64Data);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            const int16Array = new Int16Array(bytes.buffer);
+            if (int16Array.length === 0) return;
+
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / 32768.0;
+            }
+
+            const audioBuffer = playbackContext.createBuffer(1, float32Array.length, 24000);
+            audioBuffer.getChannelData(0).set(float32Array);
+
+            const source = playbackContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(playbackContext.destination);
+
+            // Планируем чанк сразу после предыдущего
+            const now = playbackContext.currentTime;
+            if (playbackTime < now) playbackTime = now;
+            source.start(playbackTime);
+            playbackTime += audioBuffer.duration;
+        }
+
+        function stopSession(keepStatus = false) {
+            isRecording = false;
+            startBtn.textContent = "Включить перевод";
+            startBtn.classList.remove('active');
+            if (!keepStatus) setStatus("Отключен");
+
+            micDot.classList.remove('on');
+            micState.textContent = "выключен";
+            meterFill.style.width = "0%";
+
+            if (socket) socket.close();
+            if (scriptProcessor) scriptProcessor.disconnect();
+            if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
+            if (audioContext) audioContext.close();
+            if (playbackContext) { playbackContext.close(); playbackContext = null; }
+        }
+
+        // --- Регистрация service worker для PWA / офлайн-оболочки ---
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').catch(err => {
+                    console.warn('SW registration failed:', err);
+                });
+            });
+        }
+    </script>
+</body>
+
+</html>
