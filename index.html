@@ -215,13 +215,139 @@
             color: #0a4bcc;
             font-weight: 600;
         }
+
+        /* Верхняя панель: заголовок + переключатель темы */
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .topbar h2 {
+            margin: 0;
+        }
+
+        .topbar-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        /* Чёрный оверлей «выключенного экрана» */
+        .screen-off {
+            position: fixed;
+            inset: 0;
+            background: #000;
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        .screen-off.show {
+            display: flex;
+        }
+
+        .screen-off .hint {
+            color: rgba(255, 255, 255, 0.22);
+            font-size: 13px;
+            animation: fadeHint 3s forwards;
+        }
+
+        /* Подсказка плавно гаснет — экран становится полностью чёрным */
+        @keyframes fadeHint {
+            to { opacity: 0; }
+        }
+
+        /* Кнопка темы — компактная, перебивает глобальные стили button */
+        .theme-btn {
+            width: auto;
+            margin: 0;
+            padding: 8px 10px;
+            font-size: 18px;
+            font-weight: normal;
+            line-height: 1;
+            background: transparent;
+            color: inherit;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+        }
+
+        /* ===== Тёмная тема ===== */
+        body.dark {
+            background: #0f1115;
+            color: #e6e6e6;
+        }
+
+        body.dark .container {
+            background: #1b1e24;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+        }
+
+        body.dark h2 {
+            color: #f0f0f0;
+        }
+
+        body.dark label {
+            color: #aab;
+        }
+
+        body.dark select,
+        body.dark input {
+            background: #262a31;
+            color: #e6e6e6;
+            border-color: #3a3f48;
+        }
+
+        body.dark .status {
+            color: #aab;
+        }
+
+        body.dark .theme-btn {
+            border-color: #3a3f48;
+        }
+
+        body.dark .stats,
+        body.dark .meter-label,
+        body.dark .key-hint,
+        body.dark details.key-block summary {
+            color: #888f9a;
+        }
+
+        body.dark .meter {
+            background: #2a2e36;
+        }
+
+        body.dark .sub-box {
+            background: #23262d;
+        }
+
+        body.dark .sub-box .sub-text {
+            color: #e6e6e6;
+        }
+
+        body.dark .sub-box.translation {
+            background: #1a2740;
+        }
+
+        body.dark .sub-box.translation .sub-text {
+            color: #8fb6ff;
+        }
     </style>
 </head>
 
 <body>
 
     <div class="container">
-        <h2>Gemini Live Translator</h2>
+        <div class="topbar">
+            <h2>Gemini Live Translator</h2>
+            <div class="topbar-actions">
+                <button id="lockBtn" class="theme-btn" type="button" aria-label="Затемнить экран">🔒</button>
+                <button id="themeBtn" class="theme-btn" type="button" aria-label="Переключить тему">🌙</button>
+            </div>
+        </div>
 
         <label>Язык оригинала:</label>
         <select id="fromLang">
@@ -281,6 +407,12 @@
         </div>
     </div>
 
+    <!-- Псевдо-выключенный экран: чёрный оверлей поверх всего.
+         Сессия продолжает работать, экран только затемнён. Тап — скрыть. -->
+    <div id="screenOff" class="screen-off">
+        <span class="hint">Тап — показать экран</span>
+    </div>
+
     <script>
         // ====== Прямое подключение к Gemini Live API (без своего сервера) ======
         // Модель с поддержкой Live API (bidiGenerateContent).
@@ -300,6 +432,9 @@
         let recvChunks = 0;
         let rxBlinkTimer;
         let inputSampleRate = 16000; // реальная частота микрофона (iOS обычно 48000)
+        let wakeLock = null;         // чтобы экран не гас во время перевода
+        let reconnectAttempts = 0;   // защита от бесконечного цикла переподключений
+        const MAX_RECONNECT = 5;
 
         // Накопленный текст текущей реплики (приходит маленькими кусочками)
         let origBuffer = "";
@@ -327,6 +462,68 @@
         if (!apiKeyInput.value) keyBlock.open = true;
 
         startBtn.addEventListener('click', toggleTranslation);
+
+        // --- Тёмная тема: выбор сохраняется на устройстве ---
+        const themeBtn = document.getElementById('themeBtn');
+        const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+        function applyTheme(theme) {
+            const dark = theme === 'dark';
+            document.body.classList.toggle('dark', dark);
+            themeBtn.textContent = dark ? '☀️' : '🌙';
+            if (themeColorMeta) themeColorMeta.setAttribute('content', dark ? '#0f1115' : '#007bff');
+        }
+        applyTheme(localStorage.getItem('theme') || 'light');
+        themeBtn.addEventListener('click', () => {
+            const next = document.body.classList.contains('dark') ? 'light' : 'dark';
+            localStorage.setItem('theme', next);
+            applyTheme(next);
+        });
+
+        // --- «Замочек»: чёрный оверлей-имитация выключенного экрана ---
+        // Сессия перевода продолжает работать (микрофон, звук, сокет),
+        // экран просто затемнён, чтобы не светил. Тап по оверлею — вернуть экран.
+        const lockBtn = document.getElementById('lockBtn');
+        const screenOff = document.getElementById('screenOff');
+        lockBtn.addEventListener('click', () => screenOff.classList.add('show'));
+        screenOff.addEventListener('click', () => screenOff.classList.remove('show'));
+
+        // --- Wake Lock: не даём экрану гаснуть, пока идёт перевод ---
+        // (на iOS заблокированный экран всё равно глушит микрофон — поэтому
+        //  главная задача держать экран активным.)
+        async function requestWakeLock() {
+            if (!('wakeLock' in navigator)) return;
+            try {
+                wakeLock = await navigator.wakeLock.request('screen');
+            } catch (err) {
+                console.warn('WakeLock не получен:', err.message);
+            }
+        }
+        async function releaseWakeLock() {
+            try { if (wakeLock) await wakeLock.release(); } catch (e) {}
+            wakeLock = null;
+        }
+
+        // При возврате в приложение: заново берём wake lock (iOS его сбрасывает
+        // при сворачивании) и переподключаем соединение, если оно отвалилось.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && isRecording) {
+                requestWakeLock();
+                reconnectIfNeeded();
+            }
+        });
+
+        async function reconnectIfNeeded() {
+            if (!isRecording) return;
+            // Будим контексты, которые iOS усыпляет в фоне
+            try { if (audioContext && audioContext.state === 'suspended') await audioContext.resume(); } catch (e) {}
+            try { if (playbackContext && playbackContext.state === 'suspended') await playbackContext.resume(); } catch (e) {}
+
+            const dead = !socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING;
+            if (dead) {
+                setStatus("Переподключение...");
+                openSocket();
+            }
+        }
 
         function setStatus(text, isError = false) {
             statusDiv.textContent = "Статус: " + text;
@@ -386,6 +583,15 @@
             }
 
             setStatus("Микрофон захвачен. Подключение...");
+            reconnectAttempts = 0;
+            await requestWakeLock();
+            openSocket();
+        }
+
+        // Открывает (или переоткрывает при обрыве) соединение с Gemini.
+        // Микрофон и аудио-контексты к этому моменту уже захвачены в жесте.
+        function openSocket() {
+            const apiKey = apiKeyInput.value.trim();
 
             // Подключаемся НАПРЯМУЮ к Gemini Live API. Ключ — в query-параметре.
             const url = `wss://${GEMINI_HOST}${GEMINI_PATH}?key=${encodeURIComponent(apiKey)}`;
@@ -416,12 +622,15 @@
                 };
                 socket.send(JSON.stringify(setupMessage));
 
-                // Микрофон уже захвачен в жесте — просто подключаем обработку
-                try {
-                    startProcessing();
-                } catch (err) {
-                    setStatus("Ошибка запуска записи: " + err.message, true);
-                    stopSession(true);
+                // Микрофон уже захвачен в жесте. Обработку подключаем один раз —
+                // при переподключении scriptProcessor уже живёт и читает новый socket.
+                if (!scriptProcessor) {
+                    try {
+                        startProcessing();
+                    } catch (err) {
+                        setStatus("Ошибка запуска записи: " + err.message, true);
+                        stopSession(true);
+                    }
                 }
             };
 
@@ -433,6 +642,7 @@
                     const response = JSON.parse(text);
 
                     if (response.setupComplete) {
+                        reconnectAttempts = 0; // успешно — обнуляем счётчик попыток
                         setStatus("Gemini готов. Говорите...");
                         return;
                     }
@@ -476,13 +686,27 @@
 
             socket.onerror = () => setStatus("Ошибка соединения с Gemini", true);
             socket.onclose = (e) => {
-                if (isRecording) {
+                if (!isRecording) return;
+
+                // Ушли в фон — iOS рвёт соединение и глушит микрофон.
+                // Не разрушаем сессию: восстановим при возврате (visibilitychange).
+                if (document.visibilityState === 'hidden') {
+                    setStatus("Пауза (приложение свёрнуто)");
+                    return;
+                }
+
+                // Видимы, но соединение упало — пробуем переподключиться.
+                reconnectAttempts++;
+                if (reconnectAttempts > MAX_RECONNECT) {
                     const hint = (e.code === 1006 || e.code === 1008)
                         ? " — проверьте ключ API и название модели"
                         : "";
-                    setStatus(`Соединение закрыто (${e.code})${hint}`, true);
+                    setStatus(`Не удаётся переподключиться (${e.code})${hint}`, true);
                     stopSession(true);
+                    return;
                 }
+                setStatus(`Переподключение (${reconnectAttempts})...`);
+                openSocket();
             };
         }
 
@@ -602,8 +826,9 @@
             micState.textContent = "выключен";
             meterFill.style.width = "0%";
 
+            releaseWakeLock();
             if (socket) socket.close();
-            if (scriptProcessor) scriptProcessor.disconnect();
+            if (scriptProcessor) { scriptProcessor.disconnect(); scriptProcessor = null; }
             if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
             if (audioContext) audioContext.close();
             if (playbackContext) { playbackContext.close(); playbackContext = null; }
