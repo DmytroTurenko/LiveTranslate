@@ -3,7 +3,7 @@
 // (соединение идёт напрямую к Gemini в облаке).
 
 // При изменении файлов поднимите версию — старый кэш удалится.
-const CACHE = 'translator-v2';
+const CACHE = 'translator-v4';
 
 const SHELL = [
     'index.html',
@@ -37,7 +37,25 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Cache-first: сначала из кэша, иначе из сети (и докладываем в кэш).
+    const isHTML = req.mode === 'navigate' ||
+        req.destination === 'document' ||
+        new URL(req.url).pathname.endsWith('index.html');
+
+    if (isHTML) {
+        // index.html — NETWORK-FIRST: при наличии сети всегда берём свежую
+        // версию (и обновляем кэш), а кэш используем только офлайн.
+        // Так новые деплои подхватываются сами, без ручной чистки кэша.
+        event.respondWith(
+            fetch(req).then((res) => {
+                const copy = res.clone();
+                caches.open(CACHE).then((cache) => cache.put(req, copy));
+                return res;
+            }).catch(() => caches.match(req).then((c) => c || caches.match('index.html')))
+        );
+        return;
+    }
+
+    // Остальная статика (иконки, manifest) — CACHE-FIRST: быстро и редко меняется.
     event.respondWith(
         caches.match(req).then((cached) => {
             if (cached) return cached;

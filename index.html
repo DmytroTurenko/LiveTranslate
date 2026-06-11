@@ -484,8 +484,17 @@
         // экран просто затемнён, чтобы не светил. Тап по оверлею — вернуть экран.
         const lockBtn = document.getElementById('lockBtn');
         const screenOff = document.getElementById('screenOff');
-        lockBtn.addEventListener('click', () => screenOff.classList.add('show'));
-        screenOff.addEventListener('click', () => screenOff.classList.remove('show'));
+        lockBtn.addEventListener('click', () => {
+            screenOff.classList.add('show');
+            // Держим экран активным и в режиме замочка (а не только при переводе),
+            // иначе iOS усыпит экран и чёрный оверлей превратится в обычный сон.
+            requestWakeLock();
+        });
+        screenOff.addEventListener('click', () => {
+            screenOff.classList.remove('show');
+            // Если перевод не идёт — wake lock больше не нужен.
+            if (!isRecording) releaseWakeLock();
+        });
 
         // --- Wake Lock: не даём экрану гаснуть, пока идёт перевод ---
         // (на iOS заблокированный экран всё равно глушит микрофон — поэтому
@@ -506,10 +515,13 @@
         // При возврате в приложение: заново берём wake lock (iOS его сбрасывает
         // при сворачивании) и переподключаем соединение, если оно отвалилось.
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && isRecording) {
+            if (document.visibilityState !== 'visible') return;
+            // iOS снимает wake lock при сворачивании/засыпании — берём заново,
+            // если идёт перевод ИЛИ открыт чёрный оверлей замочка.
+            if (isRecording || screenOff.classList.contains('show')) {
                 requestWakeLock();
-                reconnectIfNeeded();
             }
+            if (isRecording) reconnectIfNeeded();
         });
 
         async function reconnectIfNeeded() {
